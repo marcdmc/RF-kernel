@@ -2,11 +2,42 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import random
+import os
+import ray
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix
 
 import time
+
+ray.init()
+
+@ray.remote
+def groupingsToTrainMatrix(groupings):
+    """Returns the training kernel matrix given the groupings in the RF."""
+
+    m = 200
+
+    l = len(groupings[0])
+    K = np.zeros((l,l))
+
+    for grouping in groupings:
+        temp = [(v,i) for i,v in enumerate(grouping)]
+        temp.sort()
+        sorted, indices = zip(*temp)
+
+        for i in range(l):
+            j = i + 1
+            while j < l and sorted[i] == sorted[j]:
+                K[indices[i],indices[j]] += 1
+                j += 1
+
+    for i in range(l):
+        K[i,i] = m # Diagonal of the matrix
+        for j in range(i+1, l):
+            K[j,i] = K[i,j]
+    
+    return K / m
 
 class RandomForestKernel:
     """
@@ -90,31 +121,6 @@ class RandomForestKernel:
         return grouping
 
 
-    def groupingsToTrainMatrix(self, groupings):
-        """Returns the training kernel matrix given the groupings in the RF."""
-
-        l = len(groupings[0])
-        K = np.zeros((l,l))
-
-        for grouping in groupings:
-            temp = [(v,i) for i,v in enumerate(grouping)]
-            temp.sort()
-            sorted, indices = zip(*temp)
-
-            for i in range(l):
-                j = i + 1
-                while j < l and sorted[i] == sorted[j]:
-                    K[indices[i],indices[j]] += 1
-                    j += 1
-
-        for i in range(l):
-            K[i,i] = self.m # Diagonal of the matrix
-            for j in range(i+1, l):
-                K[j,i] = K[i,j]
-        
-        return K / self.m
-
-
     def groupingsToTestMatrix(self, groupings):
         """Returns the test kernel matrix given the groupings in the RF."""
 
@@ -161,10 +167,28 @@ class RandomForestKernel:
         print("Groupings: ",time.process_time() - start, "s")
         start = time.process_time()
 
+        ####### Parallelization with ray
+
+        ray.init()
+        divisions = os.cpu_count()
+        divided = []
+        # Create data divisions
+        for i in range(divisions):
+            divided.append(groupings[self.m*i//divisions : self.m*(i+1)//divisions])
+
         if self.K_train is None:
             # Training case
             self.train_groupings = groupings # Save groupings for latter computation of test kernel matrix
-            K = self.groupingsToTrainMatrix(groupings)
+            # K = groupingsToTrainMatrix(groupings)
+
+            K = ray.get(groupingsToTrainMatrix.remote(groupings))
+            print(K)
+
+            print("K: ",time.process_time() - start, "s")
+            start = time.process_time()
+
+            K = ray.get([groupingsToTrainMatrix.remote(division) for division in divided])
+            print(K)
         else:
             # Test case
             K = self.groupingsToTestMatrix(groupings)
