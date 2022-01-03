@@ -18,11 +18,13 @@ y = df[:, 13]
 # Split into train-test
 x_training_data, x_test_data, y_training_data, y_test_data = train_test_split(x, y, test_size = 0.2)
 
-r = rfk.RandomForestKernel(x_training_data, y_training_data, x_test_data)
+r = rfk.RandomForestKernel(x_training_data, y_training_data)
 
 # Train a SVC with the kernelized matrix
 clf = svm.SVC(kernel = 'precomputed')
 clf.fit(r.K_train, y_training_data)
-y_pred_test = clf.predict(r.K_test)
+
+K_test = r.transform(x_test_data)
+y_pred_test = clf.predict(K_test)
 
 print(confusion_matrix(y_test_data, y_pred_test))
