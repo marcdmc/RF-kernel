@@ -90,6 +90,63 @@ class RandomForestKernel:
         return grouping
 
 
+    def groupingsToTrainMatrix(self, groupings):
+        """Returns the training kernel matrix given the groupings in the RF."""
+
+        l = len(groupings[0])
+        K = np.zeros((l,l))
+
+        for grouping in groupings:
+            temp = [(v,i) for i,v in enumerate(grouping)]
+            temp.sort()
+            sorted, indices = zip(*temp)
+
+            for i in range(l):
+                j = i + 1
+                while j < l and sorted[i] == sorted[j]:
+                    K[indices[i],indices[j]] += 1
+                    j += 1
+
+        for i in range(l):
+            K[i,i] = self.m # Diagonal of the matrix
+            for j in range(i+1, l):
+                K[j,i] = K[i,j]
+        
+        return K / self.m
+
+
+    def groupingsToTestMatrix(self, groupings):
+        """Returns the test kernel matrix given the groupings in the RF."""
+
+        groupings_tr = self.train_groupings # Get training groupings
+
+        l_tr = len(groupings_tr[0]) # Training set length
+        l = len(groupings[0])
+
+        assert l_tr >= l, "The first grouping vectors must be longer or equal than the second ones."
+
+        K = np.zeros((l,l_tr))
+
+        for grouping_tr, grouping in zip(groupings_tr, groupings):
+            # Sort groupings and keep the indices to compare efficiently
+            temp = [(v,i) for i,v in enumerate(grouping_tr)]
+            temp.sort()
+            sorted_tr, indices_tr = zip(*temp)
+
+            temp = [(v,i) for i,v in enumerate(grouping)]
+            temp.sort()
+            sorted, indices = zip(*temp)
+
+            for i in range(l_tr):
+                j = 0
+                while j < l and sorted_tr[i] != sorted[j]:
+                    j += 1
+                while j < l and sorted_tr[i] == sorted[j]:
+                    K[indices[j], indices_tr[i]] += 1
+                    j += 1
+        
+        return K / self.m
+
     def RFKernelMatrix(self, rf, data):
         """Computes the random forest kernel matrix given a random forest and a data matrix.
         This is valid for both training and test kernel matrices."""
@@ -104,64 +161,15 @@ class RandomForestKernel:
         print("Groupings: ",time.process_time() - start, "s")
         start = time.process_time()
 
-        # Fill up training matrix for the first time
         if self.K_train is None:
-            K = np.zeros((l,l)) # This will be the kernel matrix
-
-            for grouping in groupings:
-                temp = [(v,i) for i,v in enumerate(grouping)]
-                temp.sort()
-                sorted, indices = zip(*temp)
-
-                for i in range(l):
-                    j = i+1
-
-                    while j < l and sorted[i] == sorted[j]:
-                        K[indices[i],indices[j]] += 1
-                        j += 1
-
-            print("Comparisons: ",time.process_time() - start, "s")
-
-            # Fill up the lower half of the matrix and the diagonal
-            for i in range(l):
-                K[i,i] = self.m 
-                for j in range(i+1, l):
-                    K[j,i] = K[i,j]
-
-            # Save training groupings for latter calculation of the kernel
-            self.train_groupings = groupings
-
+            # Training case
+            self.train_groupings = groupings # Save groupings for latter computation of test kernel matrix
+            K = self.groupingsToTrainMatrix(groupings)
         else:
-            # This will be the case for the test kernel matrices. One requirement is that the length
-            # of the test set is smaller than the training set.
-            l_train = len(self.K_train)
-            train_groupings = self.train_groupings
-
-            K = np.zeros((l,l_train))
-
-            for grouping, train_grouping in zip(groupings, train_groupings):
-                temp = [(v,i) for i,v in enumerate(grouping)]
-                temp.sort()
-                sorted, indices = zip(*temp)
-
-                temp = [(v,i) for i,v in enumerate(train_grouping)]
-                temp.sort()
-                train_sorted, train_indices = zip(*temp)
-
-                for i in range(l_train):
-                    # First we advance j until we find the first occurrence in the test groupings
-                    j = 0
-                    while j < l and train_sorted[i] != sorted[j]:
-                        j += 1
-
-                    # Then we proceed as in the case of the training matrix
-                    while j < l and train_sorted[i] == sorted[j]:
-                        K[indices[j], train_indices[i]] += 1
-                        j += 1
+            # Test case
+            K = self.groupingsToTestMatrix(groupings)
 
         print("Final K:", time.process_time() - start, "s")
-
-        K /= self.m
 
         return K
 
