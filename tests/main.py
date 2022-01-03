@@ -18,3 +18,4 @@ x_training_data, x_test_data, y_training_data, y_test_data = train_test_split(x,
 
 r = rfk.RandomForestKernel(x_training_data, y_training_data, x_test_data)
 print(r.K_train)
+print(r.K_test)

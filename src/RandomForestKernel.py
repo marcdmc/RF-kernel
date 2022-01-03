@@ -1,3 +1,4 @@
+import ray
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -5,6 +6,8 @@ import random
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix
+from gtm import grouping_to_matrix
+
 
 class RandomForestKernel:
     """
@@ -110,38 +113,24 @@ class RandomForestKernel:
         
         # t1 = 0
         # t2 = 0
-        for train_grouping, test_grouping in zip(train_groupings, test_groupings):
-            # st = time.time()
-            # Sort the groupings to append efficiently to the kernel matrix
-            temp = [(v,i) for i,v in enumerate(train_grouping)]
-            temp.sort()
-            train_sorted, train_indices = zip(*temp)
-            
-            temp = [(v,i) for i,v in enumerate(test_grouping)]
-            temp.sort()
-            test_sorted, test_indices = zip(*temp)
-            # mt = time.time()
-            # t1 += mt - st
-    
-            for i in range(l_train):
-                j = i + 1
-                train_index_i = train_indices[i]
-                train_sorted_i = train_sorted[i]
-                
-                while j < l_train and train_sorted_i == train_sorted[j]:
-                    K_train[train_index_i, train_indices[j]] += 1
-                    j += 1
-                
-                j = 0
-                while j < l_test and train_sorted_i != test_sorted[j]:
-                    j += 1
-                    
-                while j < l_test and train_sorted_i == test_sorted[j]:
-                    K_test[test_indices[j], train_index_i] += 1
-                    j += 1
-                    
-        #     t2 += time.time() - mt
-        # tic = time.time()
+
+        temp = zip(train_groupings, test_groupings)
+        temp = list(temp)
+        divisions = 8
+        divided = []
+        for i in range(divisions):
+            divided.append(temp[self.m*i//divisions : self.m*(i + 1)//divisions])
+
+
+        a = ray.get([grouping_to_matrix.remote(division) for division in divided])
+
+
+        zipped = a
+        unzipped_object = zip(*zipped)
+        unzipped_list = list(unzipped_object)
+        M_train, M_test = unzipped_list[0], unzipped_list[1]
+        K_train = sum(M_train)
+        K_test += sum(M_test)
         
         for i in range(l_train):
             K_train[i, i] = self.m
@@ -151,6 +140,7 @@ class RandomForestKernel:
         # print(t1, t2, time.time() - tic)
         
         self.K_train = K_train/self.m
+        self.K_test = K_test/self.m
         # return K_train, K_test
 
     def transform(self, X):
