@@ -16,11 +16,5 @@ y = df[:, 13]
 # Split into train-test
 x_training_data, x_test_data, y_training_data, y_test_data = train_test_split(x, y, test_size = 0.2)
 
-<<<<<<< HEAD
-r = rfk.RandomForestKernel(x_training_data, y_training_data, x_test_data)
-print(r.K_train)
-print(r.K_test)
-=======
 r = rfk.RandomForestKernel(x_training_data, y_training_data)
 print(r.K_train)
->>>>>>> e3ec8907d45112d15732fc4c0bbf136cb6336d38
