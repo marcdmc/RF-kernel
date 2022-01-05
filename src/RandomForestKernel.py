@@ -7,8 +7,6 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix
 from gtm import grouping_to_matrix
-
-
 import time
 
 class RandomForestKernel:
@@ -104,39 +102,6 @@ class RandomForestKernel:
         for clf in rf.estimators_:
             groupings.append(self.grouping(data, clf))
         
-<<<<<<< HEAD
-        # t1 = 0
-        # t2 = 0
-
-        temp = zip(train_groupings, test_groupings)
-        temp = list(temp)
-        divisions = 8
-        divided = []
-        for i in range(divisions):
-            divided.append(temp[self.m*i//divisions : self.m*(i + 1)//divisions])
-
-
-        a = ray.get([grouping_to_matrix.remote(division) for division in divided])
-
-
-        zipped = a
-        unzipped_object = zip(*zipped)
-        unzipped_list = list(unzipped_object)
-        M_train, M_test = unzipped_list[0], unzipped_list[1]
-        K_train = sum(M_train)
-        K_test += sum(M_test)
-        
-        for i in range(l_train):
-            K_train[i, i] = self.m
-            for j in range(i + 1, l_train):
-                K_train[j, i] = K_train[i, j]
-                
-        # print(t1, t2, time.time() - tic)
-        
-        self.K_train = K_train/self.m
-        self.K_test = K_test/self.m
-        # return K_train, K_test
-=======
         print("Groupings: ",time.process_time() - start, "s")
         start = time.process_time()
 
@@ -212,7 +177,6 @@ class RandomForestKernel:
 
         self.K_train = self.RFKernelMatrix(rf, x_train)
 
->>>>>>> e3ec8907d45112d15732fc4c0bbf136cb6336d38
 
     def transform(self, X):
         """ From an input data matrix X returns the corresponding kernel matrix K. """
