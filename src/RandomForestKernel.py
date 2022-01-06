@@ -3,11 +3,73 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import random
+import os
+import ray
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix
-from gtm import grouping_to_matrix
 import time
+
+@ray.remote
+def groupingsToTrainMatrix(groupings, m):
+    """Returns the training kernel matrix given the groupings in the RF."""
+
+    m_div = len(groupings)
+    l = len(groupings[0])
+    K = np.zeros((l,l))
+
+    for grouping in groupings:
+        temp = [(v,i) for i,v in enumerate(grouping)]
+        temp.sort()
+        sorted, indices = zip(*temp)
+
+        for i in range(l):
+            sorted_i = sorted[i]
+            indices_i = indices[i]
+            j = i + 1
+            while j < l and sorted_i == sorted[j]:
+                K[indices_i,indices[j]] += 1
+                j += 1
+
+    for i in range(l):
+        K[i,i] = m_div # Diagonal of the matrix
+        for j in range(i+1, l):
+            K[j,i] = K[i,j]
+    
+    return K / m
+
+@ray.remote
+def groupingsToTestMatrix(groupings, groupings_tr, m):
+    """Returns the test kernel matrix given the groupings in the RF."""
+
+    l = len(groupings[0])
+    l_tr = len(groupings_tr[0]) # Training set length
+
+    assert l_tr >= l, "The first grouping vectors must be longer or equal than the second ones."
+
+    K = np.zeros((l,l_tr))
+
+    for grouping_tr, grouping in zip(groupings_tr, groupings):
+        # Sort groupings and keep the indices to compare efficiently
+        temp = [(v,i) for i,v in enumerate(grouping_tr)]
+        temp.sort()
+        sorted_tr, indices_tr = zip(*temp)
+
+        temp = [(v,i) for i,v in enumerate(grouping)]
+        temp.sort()
+        sorted, indices = zip(*temp)
+
+        for i in range(l_tr):
+            sorted_tr_i = sorted_tr[i]
+            indices_tr_i = indices_tr[i]
+            j = 0
+            while j < l and sorted_tr_i != sorted[j]:
+                j += 1
+            while j < l and sorted_tr_i == sorted[j]:
+                K[indices[j], indices_tr_i] += 1
+                j += 1
+    
+    return K / m
 
 class RandomForestKernel:
     """
@@ -94,7 +156,7 @@ class RandomForestKernel:
     def RFKernelMatrix(self, rf, data):
         """Computes the random forest kernel matrix given a random forest and a data matrix.
         This is valid for both training and test kernel matrices."""
-        start = time.process_time()
+        start = time.time()
 
         groupings = []
         l = len(data)
@@ -102,78 +164,55 @@ class RandomForestKernel:
         for clf in rf.estimators_:
             groupings.append(self.grouping(data, clf))
         
-        print("Groupings: ",time.process_time() - start, "s")
-        start = time.process_time()
+        print("Groupings: ",time.time() - start, "s")
+        start = time.time()
 
-        # Fill up training matrix for the first time
+        ####### Parallelization with ray
+
+        divisions = os.cpu_count()
+        divided = []
+        # Create data divisions
+        for i in range(divisions):
+            divided.append(groupings[self.m*i//divisions : self.m*(i+1)//divisions])
+
         if self.K_train is None:
-            K = np.zeros((l,l)) # This will be the kernel matrix
+            # Training case
+            self.train_groupings = groupings # Save groupings for latter computation of test kernel matrix
+            # K = groupingsToTrainMatrix(groupings)
 
-            for grouping in groupings:
-                temp = [(v,i) for i,v in enumerate(grouping)]
-                temp.sort()
-                sorted, indices = zip(*temp)
+            #K = ray.get(groupingsToTrainMatrix.remote(groupings))
+            #print(K)
 
-                for i in range(l):
-                    j = i+1
+            #print("K: ",time.process_time() - start, "s")
+            #start = time.process_time()
 
-                    while j < l and sorted[i] == sorted[j]:
-                        K[indices[i],indices[j]] += 1
-                        j += 1
+            K = sum(ray.get([groupingsToTrainMatrix.remote(division, self.m) for division in divided]))
 
-            print("Comparisons: ",time.process_time() - start, "s")
-
-            # Fill up the lower half of the matrix and the diagonal
-            for i in range(l):
-                K[i,i] = self.m 
-                for j in range(i+1, l):
-                    K[j,i] = K[i,j]
-
-            # Save training groupings for latter calculation of the kernel
-            self.train_groupings = groupings
+            print("K train: ",time.time() - start, "s")
 
         else:
-            # This will be the case for the test kernel matrices. One requirement is that the length
-            # of the test set is smaller than the training set.
-            l_train = len(self.K_train)
-            train_groupings = self.train_groupings
+            groupings_tr = self.train_groupings
+            divided_tr = []
+            # Create data divisions
+            for i in range(divisions):
+                divided_tr.append(groupings_tr[self.m*i//divisions : self.m*(i+1)//divisions])
+            
+            # Test case
+            #K = self.groupingsToTestMatrix(groupings)
+            K = sum(ray.get([groupingsToTestMatrix.remote(division, division_tr, self.m) for division, division_tr in zip(divided, divided_tr)]))
 
-            K = np.zeros((l,l_train))
-
-            for grouping, train_grouping in zip(groupings, train_groupings):
-                temp = [(v,i) for i,v in enumerate(grouping)]
-                temp.sort()
-                sorted, indices = zip(*temp)
-
-                temp = [(v,i) for i,v in enumerate(train_grouping)]
-                temp.sort()
-                train_sorted, train_indices = zip(*temp)
-
-                for i in range(l_train):
-                    # First we advance j until we find the first occurrence in the test groupings
-                    j = 0
-                    while j < l and train_sorted[i] != sorted[j]:
-                        j += 1
-
-                    # Then we proceed as in the case of the training matrix
-                    while j < l and train_sorted[i] == sorted[j]:
-                        K[indices[j], train_indices[i]] += 1
-                        j += 1
-
-        print("Final K:", time.process_time() - start, "s")
-
-        K /= self.m
+            print("K test:", time.time() - start, "s")
 
         return K
 
 
     def _initKernel(self, x_train, y_train):
         """ Initializes the random forest kernel """
-        start = time.process_time()
+        start = time.time()
         # First a random forest is created using the training data
         rf = RandomForestClassifier(n_estimators=self.m, bootstrap=True, max_depth=self.max_depth).fit(x_train, y_train)
         self._random_forest_cf = rf # Save forest for posterior calculation of kernels
-        print("Random Forest:", time.process_time() - start, "s")
+        print("Random Forest:", time.time() - start, "s")
 
         self.K_train = self.RFKernelMatrix(rf, x_train)
 
